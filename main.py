@@ -14,7 +14,7 @@ from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 
-# Configuration des identifiants
+# Configuration des identifiants via les variables d'environnement
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 SMTP_EMAIL = os.getenv("SMTP_EMAIL")
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
@@ -69,7 +69,8 @@ def create_pdf_in_memory(text_content: str, title: str) -> BytesIO:
     )
 
     story = []
-    story.append(Paragraph(f"<b>Guide Complet : {title.capitalized()}</b>", title_style))
+    formatted_title = title.capitalize()
+    story.append(Paragraph(f"<b>Guide Complet : {formatted_title}</b>", title_style))
     story.append(Spacer(1, 15))
 
     paragraphs = text_content.split("\n")
@@ -99,7 +100,8 @@ def send_email_with_pdf(recipient_email: str, pdf_buffer: BytesIO, topic: str):
     part = MIMEBase('application', 'octet-stream')
     part.set_payload(pdf_buffer.read())
     encoders.encode_base64(part)
-    part.add_header('Content-Disposition', f'attachment; filename="ebook_{topic.lower().replace(" ", "_")}.pdf"')
+    safe_filename = topic.lower().replace(" ", "_")
+    part.add_header('Content-Disposition', f'attachment; filename="ebook_{safe_filename}.pdf"')
     msg.attach(part)
 
     with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
