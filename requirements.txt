@@ -1,6 +1,5 @@
-fastapi==0.116.1
-uvicorn==0.30.0
-google-genai>=0.1.0
-reportlab==4.0.7
-pydantic>=2.0
-email-validator>=2.0
+fastapi
+uvicorn
+google-generativeai
+reportlab
+pydantic[email]
