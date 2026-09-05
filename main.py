@@ -7,7 +7,7 @@ from email.mime.application import MIMEApplication
 
 from fastapi import FastAPI, BackgroundTasks, HTTPException
 from pydantic import BaseModel, EmailStr
-from google import genai
+import google.generativeai as genai
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -15,13 +15,14 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 # Initialisation de FastAPI
 app = FastAPI(
     title="Chariow PDF E-Book Generator",
-    description="Service backend pour générer des e-books PDF via l'IA et les envoyer par e-mail.",
+    description="Service backend pour générer des e-books PDF via Gemini et les envoyer par e-mail.",
     version="1.0.0"
 )
 
-# Configuration du client Google GenAI
+# Configuration de la clé API Gemini
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-ai_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
 
 # Modèle de données pour la requête
 class EBookRequest(BaseModel):
@@ -30,7 +31,7 @@ class EBookRequest(BaseModel):
 
 # --- FONCTION 1 : Génération du contenu via Gemini ---
 def generate_ebook_text(topic: str) -> str:
-    if not ai_client:
+    if not GEMINI_API_KEY:
         raise ValueError("GEMINI_API_KEY non configurée dans les variables d'environnement.")
     
     prompt = f"""
@@ -39,10 +40,9 @@ def generate_ebook_text(topic: str) -> str:
     Le ton doit être professionnel, clair et engageant pour un guide numérique.
     """
     
-    response = ai_client.models.generate_content(
-        model="gemini-2.0-flash",
-        contents=prompt,
-    )
+    # Utilisation du modèle standard gemini-1.5-flash
+    model = genai.GenerativeModel("gemini-1.5-flash")
+    response = model.generate_content(prompt)
     return response.text
 
 # --- FONCTION 2 : Création du PDF avec ReportLab ---
@@ -84,8 +84,7 @@ def build_pdf(text: str) -> bytes:
             story.append(Spacer(1, 8))
             continue
         
-        # Détection basique des titres
-        if line_str.startswith('#') or line_str.isupper() and len(line_str) < 50:
+        if line_str.startswith('#') or (line_str.isupper() and len(line_str) < 50):
             clean_title = line_str.lstrip('#').strip()
             story.append(Paragraph(clean_title, title_style))
         else:
@@ -111,13 +110,11 @@ def send_email_with_pdf(recipient_email: str, pdf_bytes: bytes, topic: str):
     body = f"Bonjour,\n\nVeuillez trouver ci-joint votre e-book personnalisé sur '{topic}'.\n\nBonne lecture !"
     msg.attach(MIMEText(body, 'plain'))
     
-    # Attachement du fichier PDF
     filename = f"ebook_{topic.replace(' ', '_').lower()[:20]}.pdf"
     part = MIMEApplication(pdf_bytes, Name=filename)
     part['Content-Disposition'] = f'attachment; filename="{filename}"'
     msg.attach(part)
     
-    # Connexion au serveur SMTP Gmail
     with smtplib.SMTP("smtp.gmail.com", 587) as server:
         server.starttls()
         server.login(smtp_email, smtp_password)
@@ -137,7 +134,7 @@ def process_ebook_generation(topic: str, recipient_email: str):
 @app.get("/", tags=["Home"])
 def read_root():
     return {
-        "service": "Service de Génération d'E-Book d'IA",
+        "service": "Service de Génération d'E-Book d'IA (Gemini)",
         "status": "Live",
         "message": "Prêt à recevoir les requêtes."
     }
@@ -148,4 +145,4 @@ def generate_ebook(request: EBookRequest, background_tasks: BackgroundTasks):
     return {
         "status": "success",
         "message": f"La génération de l'e-book sur '{request.topic}' est lancée. Il sera envoyé à {request.recipient_email} sous peu."
-}
+    }
