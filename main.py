@@ -1,13 +1,11 @@
 import os
 import io
-import smtplib
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
-from email.mime.application import MIMEApplication
+import base64
 
 from fastapi import FastAPI, BackgroundTasks, HTTPException
 from pydantic import BaseModel, EmailStr
 import google.generativeai as genai
+import resend
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -15,7 +13,7 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 # Initialisation de FastAPI
 app = FastAPI(
     title="Chariow PDF E-Book Generator",
-    description="Service backend pour générer des e-books PDF via Gemini et les envoyer par e-mail.",
+    description="Service backend pour générer des e-books PDF via Gemini et les envoyer via Resend.",
     version="1.0.0"
 )
 
@@ -23,6 +21,11 @@ app = FastAPI(
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
+
+# Configuration de la clé API Resend
+RESEND_API_KEY = os.getenv("RESEND_API_KEY")
+if RESEND_API_KEY:
+    resend.api_key = RESEND_API_KEY
 
 # Modèle de données pour la requête
 class EBookRequest(BaseModel):
@@ -40,7 +43,6 @@ def generate_ebook_text(topic: str) -> str:
     Le ton doit être professionnel, clair et engageant pour un guide numérique.
     """
     
-    # Utilisation du modèle standard gemini-1.5-flash
     model = genai.GenerativeModel("gemini-1.5-flash")
     response = model.generate_content(prompt)
     return response.text
@@ -94,31 +96,31 @@ def build_pdf(text: str) -> bytes:
     buffer.seek(0)
     return buffer.getvalue()
 
-# --- FONCTION 3 : Envoi par e-mail SMTP ---
+# --- FONCTION 3 : Envoi d'e-mail via l'API Resend ---
 def send_email_with_pdf(recipient_email: str, pdf_bytes: bytes, topic: str):
-    smtp_email = os.getenv("SMTP_EMAIL")
-    smtp_password = os.getenv("SMTP_PASSWORD")
-    
-    if not smtp_email or not smtp_password:
-        raise ValueError("Configuration SMTP manquante (SMTP_EMAIL ou SMTP_PASSWORD).")
+    if not RESEND_API_KEY:
+        raise ValueError("RESEND_API_KEY non configurée dans les variables d'environnement.")
         
-    msg = MIMEMultipart()
-    msg['From'] = smtp_email
-    msg['To'] = recipient_email
-    msg['Subject'] = f"Votre E-Book gratuit : {topic}"
-    
-    body = f"Bonjour,\n\nVeuillez trouver ci-joint votre e-book personnalisé sur '{topic}'.\n\nBonne lecture !"
-    msg.attach(MIMEText(body, 'plain'))
-    
     filename = f"ebook_{topic.replace(' ', '_').lower()[:20]}.pdf"
-    part = MIMEApplication(pdf_bytes, Name=filename)
-    part['Content-Disposition'] = f'attachment; filename="{filename}"'
-    msg.attach(part)
     
-    with smtplib.SMTP("smtp.gmail.com", 587) as server:
-        server.starttls()
-        server.login(smtp_email, smtp_password)
-        server.send_message(msg)
+    # Encodage du fichier PDF en base64 pour l'API Resend
+    pdf_base64 = base64.b64encode(pdf_bytes).decode("utf-8")
+    
+    params = {
+        "from": "onboarding@resend.dev",  # Adresse de test officielle fournie par Resend
+        "to": recipient_email,
+        "subject": f"Votre E-Book gratuit : {topic}",
+        "html": f"<p>Bonjour,</p><p>Veuillez trouver ci-joint votre e-book personnalisé sur <strong>'{topic}'</strong>.</p><p>Bonne lecture !</p>",
+        "attachments": [
+            {
+                "filename": filename,
+                "content": pdf_base64,
+            }
+        ]
+    }
+    
+    response = resend.Emails.send(params)
+    print(f"[RESEND RESPONSE] {response}")
 
 # --- TÂCHE EN ARRIÈRE-PLAN ---
 def process_ebook_generation(topic: str, recipient_email: str):
@@ -126,7 +128,7 @@ def process_ebook_generation(topic: str, recipient_email: str):
         text = generate_ebook_text(topic)
         pdf_bytes = build_pdf(text)
         send_email_with_pdf(recipient_email, pdf_bytes, topic)
-        print(f"[SUCCÈS] E-book sur '{topic}' envoyé avec succès à {recipient_email}")
+        print(f"[SUCCÈS] E-book sur '{topic}' envoyé avec succès via Resend à {recipient_email}")
     except Exception as e:
         print(f"[ERREUR] Échec du traitement : {e}")
 
@@ -134,7 +136,7 @@ def process_ebook_generation(topic: str, recipient_email: str):
 @app.get("/", tags=["Home"])
 def read_root():
     return {
-        "service": "Service de Génération d'E-Book d'IA (Gemini)",
+        "service": "Service de Génération d'E-Book d'IA (Resend Emailing)",
         "status": "Live",
         "message": "Prêt à recevoir les requêtes."
     }
